@@ -41,16 +41,55 @@ if ($InstallDependencies) {
 $LauncherScript = Join-Path $ProjectRoot 'run_launcher.py'
 $TrayScript = Join-Path $ProjectRoot 'run_tray.py'
 
-$ShellRoot = 'HKCU:\Software\Classes\SystemFileAssociations\.pdf\shell\RMRRPDFSplitter'
-$CommandKey = Join-Path $ShellRoot 'command'
+$SplitShellRoot = 'HKCU:\Software\Classes\SystemFileAssociations\.pdf\shell\RMRRPDFSplitter'
+$SplitCommandKey = Join-Path $SplitShellRoot 'command'
 
-New-Item -Path $ShellRoot -Force | Out-Null
-New-ItemProperty -Path $ShellRoot -Name '(default)' -Value 'Split PDF...' -PropertyType String -Force | Out-Null
-New-ItemProperty -Path $ShellRoot -Name 'Icon' -Value $PythonwExe -PropertyType String -Force | Out-Null
+New-Item -Path $SplitShellRoot -Force | Out-Null
+New-ItemProperty -Path $SplitShellRoot -Name '(default)' -Value 'Split PDF...' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $SplitShellRoot -Name 'Icon' -Value $PythonwExe -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $SplitShellRoot -Name 'MultiSelectModel' -Value 'Single' -PropertyType String -Force | Out-Null
 
-New-Item -Path $CommandKey -Force | Out-Null
-$CommandValue = '"{0}" "{1}" "%1"' -f $PythonwExe, $LauncherScript
-New-ItemProperty -Path $CommandKey -Name '(default)' -Value $CommandValue -PropertyType String -Force | Out-Null
+New-Item -Path $SplitCommandKey -Force | Out-Null
+$SplitCommandValue = '"{0}" "{1}" "%1"' -f $PythonwExe, $LauncherScript
+New-ItemProperty -Path $SplitCommandKey -Name '(default)' -Value $SplitCommandValue -PropertyType String -Force | Out-Null
+
+$CombineExtensions = @('.pdf')
+foreach ($Extension in $CombineExtensions) {
+    $CombineShellRoot = "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\RMRRCombineToPDF"
+    $CombineCommandKey = Join-Path $CombineShellRoot 'command'
+
+    New-Item -Path $CombineShellRoot -Force | Out-Null
+    New-ItemProperty -Path $CombineShellRoot -Name '(default)' -Value 'Combine to PDF...' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $CombineShellRoot -Name 'Icon' -Value $PythonwExe -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $CombineShellRoot -Name 'MultiSelectModel' -Value 'Player' -PropertyType String -Force | Out-Null
+
+    New-Item -Path $CombineCommandKey -Force | Out-Null
+    $CombineCommandValue = '"{0}" "{1}" combine --from-explorer-selection %*' -f $PythonwExe, $LauncherScript
+    New-ItemProperty -Path $CombineCommandKey -Name '(default)' -Value $CombineCommandValue -PropertyType String -Force | Out-Null
+}
+
+$StaleImageCombineExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp')
+foreach ($Extension in $StaleImageCombineExtensions) {
+    $StaleCombineShellRoot = "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\RMRRCombineToPDF"
+    if (Test-Path $StaleCombineShellRoot) {
+        Remove-Item -Path $StaleCombineShellRoot -Recurse -Force
+    }
+}
+
+$ImageExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp')
+foreach ($Extension in $ImageExtensions) {
+    $ConvertShellRoot = "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\RMRRConvertImageToPDF"
+    $ConvertCommandKey = Join-Path $ConvertShellRoot 'command'
+
+    New-Item -Path $ConvertShellRoot -Force | Out-Null
+    New-ItemProperty -Path $ConvertShellRoot -Name '(default)' -Value 'Convert to PDF...' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $ConvertShellRoot -Name 'Icon' -Value $PythonwExe -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $ConvertShellRoot -Name 'MultiSelectModel' -Value 'Player' -PropertyType String -Force | Out-Null
+
+    New-Item -Path $ConvertCommandKey -Force | Out-Null
+    $ConvertCommandValue = '"{0}" "{1}" convert-image --from-explorer-selection %*' -f $PythonwExe, $LauncherScript
+    New-ItemProperty -Path $ConvertCommandKey -Name '(default)' -Value $ConvertCommandValue -PropertyType String -Force | Out-Null
+}
 
 $StartupFolder = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
 $ShortcutPath = Join-Path $StartupFolder 'PDF Splitter Tray.lnk'
@@ -66,5 +105,5 @@ $Shortcut.Save()
 Start-Process -FilePath $PythonwExe -ArgumentList ('"{0}"' -f $TrayScript) -WorkingDirectory $ProjectRoot -WindowStyle Hidden
 
 Write-Host 'Install complete.'
-Write-Host 'Context menu entry registered for current user.'
+Write-Host 'Context menu entries registered for current user.'
 Write-Host 'Tray startup shortcut created and app launched.'

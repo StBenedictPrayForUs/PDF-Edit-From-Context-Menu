@@ -1,13 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
+import math
 import re
-from typing import Iterable
+from typing import Callable, Iterable
 
 import fitz
 from pypdf import PdfReader, PdfWriter
 from PySide6.QtGui import QImage
+
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+SUPPORTED_COMBINE_EXTENSIONS = {".pdf", *SUPPORTED_IMAGE_EXTENSIONS}
+BALANCED_MAX_IMAGE_DIMENSION = 2200
+BALANCED_JPEG_QUALITY = 78
 
 
 class PasswordRequiredError(Exception):
@@ -18,12 +34,30 @@ class InvalidPasswordError(Exception):
     pass
 
 
+class UnsupportedSourceError(Exception):
+    pass
+
+
 @dataclass
 class PdfMetadata:
     source_path: Path
     page_count: int
     base_name: str
     password: str | None
+
+
+@dataclass(frozen=True)
+class CompressionProfile:
+    max_dimension: int
+    jpeg_quality: int
+
+
+BALANCED_COMPRESSION = CompressionProfile(
+    max_dimension=BALANCED_MAX_IMAGE_DIMENSION,
+    jpeg_quality=BALANCED_JPEG_QUALITY,
+)
+
+ProgressCallback = Callable[[int, int, str], None]
 
 
 def load_pdf_metadata(path: str | Path, password: str | None = None) -> PdfMetadata:
@@ -78,6 +112,9 @@ def render_page_thumbnail(
 
 
 def compute_sections(page_count: int, split_starts: Iterable[int]) -> list[tuple[int, int]]:
+    if page_count <= 0:
+        return []
+
     starts = {1}
     for page in split_starts:
         if 1 <= page <= page_count:
@@ -96,6 +133,8 @@ def sanitize_filename(name: str, fallback: str) -> str:
     clean = clean.rstrip(" .")
     if not clean:
         clean = fallback
+    if clean.split(".")[0].upper() in WINDOWS_RESERVED_NAMES:
+        clean = f"{clean}_file"
     return clean[:180]
 
 
@@ -112,6 +151,169 @@ def ensure_unique_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         index += 1
+
+
+def validate_combine_sources(source_paths: Iterable[str | Path]) -> list[Path]:
+    resolved_paths: list[Path] = []
+    for raw_path in source_paths:
+        path = Path(raw_path).resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        if path.suffix.lower() not in SUPPORTED_COMBINE_EXTENSIONS:
+            raise UnsupportedSourceError(f"Unsupported file type: {path.name}")
+        resolved_paths.append(path)
+
+    if not resolved_paths:
+        raise ValueError("Select at least one PDF or image to combine.")
+
+    logging.info("Validated combine sources: %s", resolved_paths)
+    return resolved_paths
+
+
+def default_combined_output_path(
+    source_paths: Iterable[str | Path],
+    suggested_name: str = "combined.pdf",
+) -> Path:
+    resolved_paths = validate_combine_sources(source_paths)
+    default_dir = _default_output_directory(resolved_paths)
+    filename = sanitize_filename(suggested_name, "combined.pdf")
+    if not filename.lower().endswith(".pdf"):
+        filename = f"{filename}.pdf"
+    return default_dir / filename
+
+
+def _default_output_directory(source_paths: list[Path]) -> Path:
+    first_parent = source_paths[0].parent
+    if all(path.parent == first_parent for path in source_paths):
+        return first_parent
+    return first_parent
+
+
+def _compression_profile(name: str) -> CompressionProfile:
+    if name != "balanced":
+        raise ValueError(f"Unsupported compression profile: {name}")
+    return BALANCED_COMPRESSION
+
+
+def _append_pdf(target: fitz.Document, source_path: Path) -> None:
+    logging.info("Appending PDF source: %s", source_path)
+    doc = fitz.open(str(source_path))
+    try:
+        target.insert_pdf(doc)
+    finally:
+        doc.close()
+
+
+def _append_image(target: fitz.Document, source_path: Path, profile: CompressionProfile) -> None:
+    logging.info("Appending image source: %s", source_path)
+    image_doc = fitz.open(str(source_path))
+    try:
+        keep_original = source_path.suffix.lower() in {".jpg", ".jpeg"} and _can_keep_original_image(
+            image_doc,
+            profile,
+        )
+        if keep_original:
+            logging.info("Keeping original image without recompression: %s", source_path)
+            converted = fitz.open("pdf", image_doc.convert_to_pdf())
+            try:
+                target.insert_pdf(converted)
+            finally:
+                converted.close()
+            return
+
+        for page_index in range(image_doc.page_count):
+            page = image_doc.load_page(page_index)
+            pixmap = _compressed_pixmap_for_page(page, profile)
+            logging.info(
+                "Compressed image page %s from %s to %sx%s",
+                page_index + 1,
+                source_path.name,
+                pixmap.width,
+                pixmap.height,
+            )
+            page_width = max(float(pixmap.width), 1.0)
+            page_height = max(float(pixmap.height), 1.0)
+            output_page = target.new_page(width=page_width, height=page_height)
+            output_page.insert_image(
+                output_page.rect,
+                stream=pixmap.tobytes("jpeg", jpg_quality=profile.jpeg_quality),
+            )
+    finally:
+        image_doc.close()
+
+
+def _can_keep_original_image(image_doc: fitz.Document, profile: CompressionProfile) -> bool:
+    for page_index in range(image_doc.page_count):
+        rect = image_doc.load_page(page_index).rect
+        if max(rect.width, rect.height) > profile.max_dimension:
+            return False
+    return True
+
+
+def _compressed_pixmap_for_page(page: fitz.Page, profile: CompressionProfile) -> fitz.Pixmap:
+    scale = min(1.0, profile.max_dimension / max(page.rect.width, page.rect.height, 1.0))
+    if math.isclose(scale, 1.0):
+        matrix = fitz.Matrix(1, 1)
+    else:
+        matrix = fitz.Matrix(scale, scale)
+    return page.get_pixmap(matrix=matrix, alpha=False)
+
+
+def combine_documents_to_pdf(
+    source_paths: Iterable[str | Path],
+    destination_path: str | Path,
+    compression_profile: str = "balanced",
+    progress_callback: ProgressCallback | None = None,
+    delete_sources: bool = False,
+) -> Path:
+    sources = validate_combine_sources(source_paths)
+    destination = Path(destination_path).resolve()
+    if destination.suffix.lower() != ".pdf":
+        destination = destination.with_suffix(".pdf")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    profile = _compression_profile(compression_profile)
+    logging.info(
+        "Starting document combine. Source count=%s Destination=%s Profile=%s",
+        len(sources),
+        destination,
+        compression_profile,
+    )
+    merged = fitz.open()
+    try:
+        total_steps = len(sources)
+        for index, path in enumerate(sources, start=1):
+            if progress_callback is not None:
+                progress_callback(index - 1, total_steps, f"Processing {path.name}")
+            if path.suffix.lower() == ".pdf":
+                _append_pdf(merged, path)
+            else:
+                _append_image(merged, path, profile)
+
+        if merged.page_count == 0:
+            raise ValueError("The selected files did not produce any PDF pages.")
+
+        if progress_callback is not None:
+            progress_callback(total_steps, total_steps, f"Saving {destination.name}")
+        merged.save(
+            str(destination),
+            garbage=3,
+            deflate=True,
+            deflate_images=True,
+            use_objstms=True,
+        )
+    finally:
+        merged.close()
+
+    if delete_sources:
+        for index, path in enumerate(sources, start=1):
+            if progress_callback is not None:
+                progress_callback(index, len(sources), f"Deleting {path.name}")
+            logging.info("Deleting source after successful combine: %s", path)
+            path.unlink()
+
+    logging.info("Document combine completed successfully: %s", destination)
+    return destination
 
 
 def split_pdf(

@@ -287,6 +287,15 @@ class PdfEditorWindow(QMainWindow):
         if chosen:
             self.load_pdf(chosen)
 
+    def _restore_window_header(self) -> None:
+        if self.metadata is None:
+            self.setWindowTitle("PDF Splitter")
+            self.file_label.setText("No PDF loaded")
+            return
+
+        self.setWindowTitle(f"PDF Splitter - {self.metadata.source_path.name}")
+        self.file_label.setText(str(self.metadata.source_path))
+
     def load_pdf(self, path: str | Path) -> bool:
         path = str(Path(path).resolve())
         logging.info("Editor requested to load PDF: %s", path)
@@ -310,6 +319,7 @@ class PdfEditorWindow(QMainWindow):
                     QLineEdit.Password,
                 )
                 if not ok:
+                    self._restore_window_header()
                     return False
                 password = entered
             except pdf_ops.InvalidPasswordError:
@@ -320,9 +330,11 @@ class PdfEditorWindow(QMainWindow):
                     QLineEdit.Password,
                 )
                 if not ok:
+                    self._restore_window_header()
                     return False
                 password = entered
             except Exception as exc:
+                self._restore_window_header()
                 QMessageBox.critical(self, "Failed to Open PDF", str(exc))
                 return False
 
@@ -514,6 +526,9 @@ class PdfEditorWindow(QMainWindow):
             return
 
         sections = pdf_ops.compute_sections(self.metadata.page_count, self.split_starts)
+        if not sections:
+            QMessageBox.information(self, "Nothing to Export", "This PDF has no pages to export.")
+            return
         names: dict[int, str] = {}
         for idx, (start, _) in enumerate(sections, start=1):
             default_name = self._default_section_name(idx)
