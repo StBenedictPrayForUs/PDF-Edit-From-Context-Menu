@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -41,6 +42,8 @@ class PageRowWidget(QWidget):
     split_toggled = Signal(int)
     rotate_left = Signal(int)
     rotate_right = Signal(int)
+    move_up = Signal(int)
+    move_down = Signal(int)
 
     def __init__(self, page: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -74,6 +77,18 @@ class PageRowWidget(QWidget):
         controls.setContentsMargins(0, 0, 0, 0)
         controls.setSpacing(6)
 
+        self.move_up_btn = QPushButton("↑")
+        self.move_up_btn.setFixedSize(36, 30)
+        self.move_up_btn.setToolTip("Move page up")
+        self.move_up_btn.setFocusPolicy(Qt.NoFocus)
+        self.move_up_btn.clicked.connect(self._emit_move_up)
+
+        self.move_down_btn = QPushButton("↓")
+        self.move_down_btn.setFixedSize(36, 30)
+        self.move_down_btn.setToolTip("Move page down")
+        self.move_down_btn.setFocusPolicy(Qt.NoFocus)
+        self.move_down_btn.clicked.connect(self._emit_move_down)
+
         self.rotate_left_btn = QPushButton()
         self.rotate_left_btn.setText("Rotate -90")
         self.rotate_left_btn.setFixedSize(90, 30)
@@ -88,6 +103,8 @@ class PageRowWidget(QWidget):
         self.rotate_right_btn.setFocusPolicy(Qt.NoFocus)
         self.rotate_right_btn.clicked.connect(lambda: self.rotate_right.emit(self.page))
 
+        controls.addWidget(self.move_up_btn)
+        controls.addWidget(self.move_down_btn)
         controls.addWidget(self.rotate_left_btn)
         controls.addWidget(self.rotate_right_btn)
         controls.addStretch(1)
@@ -100,7 +117,14 @@ class PageRowWidget(QWidget):
         self.image_label.setFixedSize(width + 8, height + 8)
         self.image_label.setPixmap(pixmap)
 
-    def set_state(self, split_start: bool, rotation: int) -> None:
+    def set_state(
+        self,
+        output_position: int,
+        split_start: bool,
+        rotation: int,
+        can_move_up: bool,
+        can_move_down: bool,
+    ) -> None:
         tags: list[str] = []
         if split_start:
             tags.append("Split Start")
@@ -108,24 +132,38 @@ class PageRowWidget(QWidget):
             tags.append(f"R{rotation}")
 
         suffix = f" | {' | '.join(tags)}" if tags else ""
-        self.header.setText(f"Page {self.page}{suffix}")
+        self.header.setText(f"Page {output_position}{suffix}")
+        self.move_up_btn.setEnabled(can_move_up)
+        self.move_down_btn.setEnabled(can_move_down)
 
         if split_start:
             self.setStyleSheet("background: #0b6e0b; border: 1px solid #1ca31c; border-radius: 6px;")
         else:
             self.setStyleSheet("background: transparent; border: 1px solid palette(mid); border-radius: 6px;")
 
+    def _emit_move_up(self) -> None:
+        # Defer list mutation until the button click event finishes inside Qt.
+        QTimer.singleShot(0, lambda: self.move_up.emit(self.page))
+
+    def _emit_move_down(self) -> None:
+        # Defer list mutation until the button click event finishes inside Qt.
+        QTimer.singleShot(0, lambda: self.move_down.emit(self.page))
+
 
 class PdfEditorWindow(QMainWindow):
+    DELETE_SOURCE_SETTING_KEY = "split/delete_source_after_export"
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("PDF Splitter")
         self.resize(1280, 820)
+        self.settings = QSettings("RMRR", "PDF Splitter")
 
         self.metadata: pdf_ops.PdfMetadata | None = None
         self.password: str | None = None
-        self.split_starts: set[int] = {1}
+        self.split_starts: set[int] = set()
         self.page_rotations: dict[int, int] = {}
+        self.page_order: list[int] = []
         self.section_name_overrides: dict[int, str] = {}
         self.page_items: dict[int, QListWidgetItem] = {}
         self.page_rows: dict[int, PageRowWidget] = {}
@@ -168,6 +206,11 @@ class PdfEditorWindow(QMainWindow):
         page_down_btn = QPushButton("Page Down")
         page_down_btn.clicked.connect(lambda: self._page_scroll(1))
         action_bar.addWidget(page_down_btn)
+
+        self.delete_source_checkbox = QCheckBox("Delete source after split")
+        self.delete_source_checkbox.setChecked(self._load_delete_source_setting())
+        self.delete_source_checkbox.toggled.connect(self._save_delete_source_setting)
+        action_bar.addWidget(self.delete_source_checkbox)
         action_bar.addStretch(1)
 
         export_btn = QPushButton("Export Splits")
@@ -195,7 +238,8 @@ class PdfEditorWindow(QMainWindow):
             "How to use:\n"
             "- Click the page image to mark split starts.\n"
             "- Page 1 is always the first section start.\n"
-            "- Use the arrow buttons beside each page to rotate."
+            "- Use the arrow buttons to move pages up or down for export.\n"
+            "- Use the rotate buttons beside each page to rotate."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(window-text);")
@@ -343,15 +387,8 @@ class PdfEditorWindow(QMainWindow):
         self.file_label.setText(str(metadata.source_path))
         self.setWindowTitle(f"PDF Splitter - {metadata.source_path.name}")
 
-        self.split_starts = {1}
-        self.page_rotations = {}
-        self.section_name_overrides = {}
-        self.page_items = {}
-        self.page_rows = {}
-        self.base_pixmaps = {}
-        self._pending_page_item_pages = []
-        self._pending_thumbnail_pages = []
-        self._active_load_token += 1
+        self._reset_loaded_document_state()
+        self.page_order = list(range(1, metadata.page_count + 1))
         load_token = self._active_load_token
 
         self._loading_items = True
@@ -360,6 +397,43 @@ class PdfEditorWindow(QMainWindow):
         self._pending_thumbnail_pages = list(range(1, metadata.page_count + 1))
         QTimer.singleShot(0, lambda: self._create_next_page_batch(load_token))
         return True
+
+    def _load_delete_source_setting(self) -> bool:
+        value = self.settings.value(self.DELETE_SOURCE_SETTING_KEY, False, bool)
+        return bool(value)
+
+    def _save_delete_source_setting(self, checked: bool) -> None:
+        self.settings.setValue(self.DELETE_SOURCE_SETTING_KEY, checked)
+
+    def _clear_section_names_ui(self) -> None:
+        while self.section_layout.count():
+            child = self.section_layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.section_layout.addStretch(1)
+        self.section_name_inputs = {}
+
+    def _reset_loaded_document_state(self) -> None:
+        self.split_starts = set()
+        self.page_rotations = {}
+        self.page_order = []
+        self.section_name_overrides = {}
+        self.page_items = {}
+        self.page_rows = {}
+        self.base_pixmaps = {}
+        self._pending_page_item_pages = []
+        self._pending_thumbnail_pages = []
+        self._active_load_token += 1
+        self._loading_items = False
+        self.page_list.clear()
+        self._clear_section_names_ui()
+
+    def _clear_loaded_pdf(self) -> None:
+        self.metadata = None
+        self.password = None
+        self._reset_loaded_document_state()
+        self._restore_window_header()
 
     def _create_next_page_batch(self, load_token: int) -> None:
         if load_token != self._active_load_token:
@@ -371,16 +445,7 @@ class PdfEditorWindow(QMainWindow):
         created = 0
         while self._pending_page_item_pages and created < batch_size:
             page = self._pending_page_item_pages.pop(0)
-
-            item = QListWidgetItem()
-            item.setSizeHint(QSize(1, self._item_row_height()))
-            self.page_list.addItem(item)
-
-            row = PageRowWidget(page)
-            row.split_toggled.connect(self._toggle_split_start)
-            row.rotate_left.connect(lambda p=page: self._rotate_page(p, -90))
-            row.rotate_right.connect(lambda p=page: self._rotate_page(p, 90))
-            self.page_list.setItemWidget(item, row)
+            item, row = self._create_page_row(page)
 
             pixmap = QPixmap(self.thumbnail_width, self._thumbnail_height())
             pixmap.fill(Qt.lightGray)
@@ -397,6 +462,7 @@ class PdfEditorWindow(QMainWindow):
             return
 
         self._loading_items = False
+        self._sync_page_list_order()
         self._refresh_sections_ui()
         logging.info("Editor finished loading page rows for %s (%s pages)", self.metadata.source_path, self.metadata.page_count)
         QTimer.singleShot(0, lambda: self._load_next_thumbnail(load_token))
@@ -423,6 +489,58 @@ class PdfEditorWindow(QMainWindow):
 
         QTimer.singleShot(0, lambda: self._load_next_thumbnail(load_token))
 
+    def _page_position(self, page: int) -> int:
+        return self.page_order.index(page) + 1
+
+    def _current_split_positions(self) -> set[int]:
+        split_positions: set[int] = set()
+        for page in self.split_starts:
+            position = self._page_position(page)
+            if position > 1:
+                split_positions.add(position)
+        return split_positions
+
+    def _ordered_sections(self) -> list[tuple[int, int, int]]:
+        sections = pdf_ops.compute_sections(len(self.page_order), self._current_split_positions())
+        return [(start, end, self.page_order[start - 1]) for start, end in sections]
+
+    def _create_page_row(self, page: int) -> tuple[QListWidgetItem, PageRowWidget]:
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(1, self._item_row_height()))
+        self.page_list.addItem(item)
+
+        row = PageRowWidget(page)
+        row.split_toggled.connect(self._toggle_split_start)
+        row.move_up.connect(lambda p=page: self._move_page(p, -1))
+        row.move_down.connect(lambda p=page: self._move_page(p, 1))
+        row.rotate_left.connect(lambda p=page: self._rotate_page(p, -90))
+        row.rotate_right.connect(lambda p=page: self._rotate_page(p, 90))
+        self.page_list.setItemWidget(item, row)
+        return item, row
+
+    def _sync_page_list_order(self) -> None:
+        scroll_bar = self.page_list.verticalScrollBar()
+        scroll_value = scroll_bar.value()
+
+        self.page_list.setUpdatesEnabled(False)
+        try:
+            self.page_list.clear()
+            self.page_items = {}
+            self.page_rows = {}
+
+            for page in self.page_order:
+                item, row = self._create_page_row(page)
+                self.page_items[page] = item
+                self.page_rows[page] = row
+                self._update_item_visual(page)
+        finally:
+            self.page_list.setUpdatesEnabled(True)
+
+        for page in self.page_order:
+            self._update_item_visual(page)
+
+        QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_value))
+
     def _display_pixmap_for_page(self, page: int) -> QPixmap:
         base = self.base_pixmaps[page]
         rotation = self.page_rotations.get(page, 0)
@@ -441,7 +559,9 @@ class PdfEditorWindow(QMainWindow):
         )
 
     def _toggle_split_start(self, page: int) -> None:
-        if self._loading_items or self.metadata is None or page == 1:
+        if self._loading_items or self.metadata is None:
+            return
+        if self._page_position(page) == 1:
             return
 
         if page in self.split_starts:
@@ -460,11 +580,35 @@ class PdfEditorWindow(QMainWindow):
         self.page_rotations[page] = (current + delta) % 360
         self._update_item_visual(page)
 
+    def _move_page(self, page: int, direction: int) -> None:
+        if self._loading_items or self.metadata is None:
+            return
+
+        current_index = self.page_order.index(page)
+        target_index = current_index + direction
+        if target_index < 0 or target_index >= len(self.page_order):
+            return
+
+        logging.info("Moving page %s from position %s to %s", page, current_index + 1, target_index + 1)
+        self.page_order[current_index], self.page_order[target_index] = (
+            self.page_order[target_index],
+            self.page_order[current_index],
+        )
+        self._sync_page_list_order()
+        self._refresh_sections_ui()
+
     def _update_item_visual(self, page: int) -> None:
         row = self.page_rows[page]
-        split = page in self.split_starts
+        position = self._page_position(page)
+        split = position == 1 or page in self.split_starts
         rotation = self.page_rotations.get(page, 0)
-        row.set_state(split, rotation)
+        row.set_state(
+            position,
+            split,
+            rotation,
+            can_move_up=position > 1,
+            can_move_down=position < len(self.page_order),
+        )
         display = self._display_pixmap_for_page(page)
         row.set_thumbnail(display, self.thumbnail_width, self._thumbnail_height())
 
@@ -476,18 +620,12 @@ class PdfEditorWindow(QMainWindow):
         if self.metadata is None:
             return
 
-        while self.section_layout.count():
-            child = self.section_layout.takeAt(0)
-            widget = child.widget()
-            if widget is not None:
-                widget.deleteLater()
+        self._clear_section_names_ui()
+        sections = self._ordered_sections()
 
-        self.section_name_inputs = {}
-        sections = pdf_ops.compute_sections(self.metadata.page_count, self.split_starts)
-
-        for index, (start, end) in enumerate(sections, start=1):
+        for index, (start, end, start_page) in enumerate(sections, start=1):
             default_name = self._default_section_name(index)
-            existing = self.section_name_overrides.get(start, default_name)
+            existing = self.section_name_overrides.get(start_page, default_name)
 
             block = QWidget()
             block_layout = QVBoxLayout(block)
@@ -498,7 +636,7 @@ class PdfEditorWindow(QMainWindow):
             name_input = QLineEdit(existing)
             name_input.setMinimumWidth(360)
             name_input.setPlaceholderText(default_name)
-            name_input.textChanged.connect(lambda txt, s=start: self._on_section_name_changed(s, txt))
+            name_input.textChanged.connect(lambda txt, p=start_page: self._on_section_name_changed(p, txt))
 
             block_layout.addWidget(label)
             block_layout.addWidget(name_input)
@@ -510,45 +648,53 @@ class PdfEditorWindow(QMainWindow):
             )
 
             self.section_layout.addWidget(block)
-            self.section_name_inputs[start] = name_input
+            self.section_name_inputs[start_page] = name_input
 
         self.section_layout.addStretch(1)
 
-        for page in self.page_rows:
+        for page in self.page_order:
             self._update_item_visual(page)
 
-    def _on_section_name_changed(self, start: int, text: str) -> None:
-        self.section_name_overrides[start] = text
+    def _on_section_name_changed(self, start_page: int, text: str) -> None:
+        self.section_name_overrides[start_page] = text
 
     def _export(self) -> None:
         if self.metadata is None:
             QMessageBox.information(self, "Nothing to Export", "Load a PDF first.")
             return
 
-        sections = pdf_ops.compute_sections(self.metadata.page_count, self.split_starts)
+        sections = self._ordered_sections()
         if not sections:
             QMessageBox.information(self, "Nothing to Export", "This PDF has no pages to export.")
             return
         names: dict[int, str] = {}
-        for idx, (start, _) in enumerate(sections, start=1):
+        split_positions = self._current_split_positions()
+        for idx, (start, _, start_page) in enumerate(sections, start=1):
             default_name = self._default_section_name(idx)
-            text = self.section_name_inputs.get(start).text() if start in self.section_name_inputs else ""
+            text = self.section_name_inputs.get(start_page).text() if start_page in self.section_name_inputs else ""
             names[start] = text or default_name
 
         try:
             outputs = pdf_ops.split_pdf(
                 source_path=self.metadata.source_path,
                 password=self.password,
-                split_starts=self.split_starts,
+                split_starts=split_positions,
                 section_names=names,
                 page_rotations=self.page_rotations,
+                page_order=self.page_order,
+                delete_source=self.delete_source_checkbox.isChecked(),
                 output_dir=self.metadata.source_path.parent,
             )
         except Exception as exc:
             QMessageBox.critical(self, "Export Failed", str(exc))
             return
 
-        msg = f"Wrote {len(outputs)} file(s) to:\n{self.metadata.source_path.parent}"
+        output_dir = self.metadata.source_path.parent
+        delete_source = self.delete_source_checkbox.isChecked()
+        self._clear_loaded_pdf()
+        msg = f"Wrote {len(outputs)} file(s) to:\n{output_dir}"
+        if delete_source:
+            msg += "\n\nSource PDF deleted."
         QMessageBox.information(self, "Export Complete", msg)
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]

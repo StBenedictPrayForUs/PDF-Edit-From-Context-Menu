@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QAction, QIcon
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSt
 from .editor_window import PdfEditorWindow
 from .ipc import IpcServer
 from .logging_utils import configure_logging
+from .combine_flow import run_combine_dialog, run_convert_image_dialog
 
 
 class MessageBridge(QObject):
@@ -21,6 +23,7 @@ class TrayRuntime:
     def __init__(self, app: QApplication) -> None:
         self.app = app
         self.window: PdfEditorWindow | None = None
+        self._busy_action: str | None = None
 
         self.bridge = MessageBridge()
         self.bridge.received.connect(self._handle_ipc_message)
@@ -92,23 +95,49 @@ class TrayRuntime:
 
     def _handle_ipc_message(self, payload: dict) -> None:
         action = payload.get("action")
-        if action != "open_pdf":
+        if action == "open_pdf":
+            raw_path = payload.get("path")
+            if not raw_path:
+                return
+
+            path = Path(raw_path)
+            if not path.exists():
+                QMessageBox.warning(None, "PDF Not Found", f"Could not find:\n{raw_path}")
+                return
+
+            self.open_pdf(str(path))
             return
 
-        raw_path = payload.get("path")
-        if not raw_path:
+        if action == "combine_documents":
+            self._run_single_action("combine", payload.get("paths", []), run_combine_dialog)
             return
 
-        path = Path(raw_path)
-        if not path.exists():
-            QMessageBox.warning(None, "PDF Not Found", f"Could not find:\n{raw_path}")
+        if action == "convert_images":
+            self._run_single_action("convert-image", payload.get("paths", []), run_convert_image_dialog)
             return
-
-        self.open_pdf(str(path))
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._show_window()
+
+    def _run_single_action(
+        self,
+        action_name: str,
+        paths: list[str],
+        handler: Callable[[list[str]], int],
+    ) -> None:
+        if self._busy_action == action_name:
+            logging.info("Duplicate %s request received while action is already active.", action_name)
+            return
+        if self._busy_action is not None:
+            logging.info("Ignoring %s request while %s is active.", action_name, self._busy_action)
+            return
+
+        self._busy_action = action_name
+        try:
+            handler(list(paths))
+        finally:
+            self._busy_action = None
 
 
 def main() -> int:

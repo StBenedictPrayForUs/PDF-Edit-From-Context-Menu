@@ -128,6 +128,24 @@ def compute_sections(page_count: int, split_starts: Iterable[int]) -> list[tuple
     return sections
 
 
+def normalize_page_order(page_count: int, page_order: Iterable[int] | None = None) -> list[int]:
+    if page_count < 0:
+        raise ValueError("Page count cannot be negative.")
+
+    if page_order is None:
+        return list(range(1, page_count + 1))
+
+    ordered = [int(page) for page in page_order]
+    if len(ordered) != page_count:
+        raise ValueError("Page order must include every page exactly once.")
+
+    expected = set(range(1, page_count + 1))
+    if set(ordered) != expected:
+        raise ValueError("Page order must include every page exactly once.")
+
+    return ordered
+
+
 def sanitize_filename(name: str, fallback: str) -> str:
     clean = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "_", (name or "").strip())
     clean = clean.rstrip(" .")
@@ -322,6 +340,8 @@ def split_pdf(
     split_starts: Iterable[int],
     section_names: dict[int, str],
     page_rotations: dict[int, int],
+    page_order: Iterable[int] | None = None,
+    delete_source: bool = False,
     output_dir: str | Path | None = None,
 ) -> list[Path]:
     source = Path(source_path).resolve()
@@ -336,7 +356,8 @@ def split_pdf(
             raise InvalidPasswordError("Invalid password.")
 
     page_count = len(reader.pages)
-    sections = compute_sections(page_count, split_starts)
+    ordered_pages = normalize_page_order(page_count, page_order)
+    sections = compute_sections(len(ordered_pages), split_starts)
     written_paths: list[Path] = []
 
     for idx, (start, end) in enumerate(sections, start=1):
@@ -345,9 +366,10 @@ def split_pdf(
         destination = ensure_unique_path(out_dir / f"{section_name}.pdf")
 
         writer = PdfWriter()
-        for page_num in range(start, end + 1):
-            page = reader.pages[page_num - 1]
-            rotate = int(page_rotations.get(page_num, 0)) % 360
+        for page_position in range(start, end + 1):
+            source_page_num = ordered_pages[page_position - 1]
+            page = reader.pages[source_page_num - 1]
+            rotate = int(page_rotations.get(source_page_num, 0)) % 360
             if rotate:
                 page.rotate(rotate)
             writer.add_page(page)
@@ -356,5 +378,9 @@ def split_pdf(
             writer.write(f)
 
         written_paths.append(destination)
+
+    if delete_source:
+        logging.info("Deleting split source after successful export: %s", source)
+        source.unlink()
 
     return written_paths

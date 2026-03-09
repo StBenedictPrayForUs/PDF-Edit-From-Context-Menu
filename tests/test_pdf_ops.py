@@ -170,6 +170,134 @@ class PdfOpsTests(unittest.TestCase):
             with self.assertRaises(pdf_ops.UnsupportedSourceError):
                 pdf_ops.validate_combine_sources([source])
 
+    def test_split_pdf_keeps_default_page_order_when_not_specified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.pdf"
+            _create_pdf(source, ["ONE", "TWO", "THREE"])
+
+            outputs = pdf_ops.split_pdf(
+                source_path=source,
+                password=None,
+                split_starts={3},
+                section_names={1: "first", 3: "second"},
+                page_rotations={},
+                output_dir=root,
+            )
+
+            self.assertEqual([path.name for path in outputs], ["first.pdf", "second.pdf"])
+            first_doc = fitz.open(str(outputs[0]))
+            second_doc = fitz.open(str(outputs[1]))
+            try:
+                self.assertEqual(first_doc.page_count, 2)
+                self.assertIn("ONE", first_doc.load_page(0).get_text())
+                self.assertIn("TWO", first_doc.load_page(1).get_text())
+                self.assertEqual(second_doc.page_count, 1)
+                self.assertIn("THREE", second_doc.load_page(0).get_text())
+            finally:
+                first_doc.close()
+                second_doc.close()
+
+    def test_split_pdf_uses_reordered_page_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.pdf"
+            _create_pdf(source, ["ONE", "TWO", "THREE"])
+
+            outputs = pdf_ops.split_pdf(
+                source_path=source,
+                password=None,
+                split_starts=set(),
+                section_names={1: "reordered"},
+                page_rotations={},
+                page_order=[2, 1, 3],
+                output_dir=root,
+            )
+
+            doc = fitz.open(str(outputs[0]))
+            try:
+                self.assertEqual(doc.page_count, 3)
+                self.assertIn("TWO", doc.load_page(0).get_text())
+                self.assertIn("ONE", doc.load_page(1).get_text())
+                self.assertIn("THREE", doc.load_page(2).get_text())
+            finally:
+                doc.close()
+
+    def test_split_pdf_applies_rotation_to_reordered_source_page(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.pdf"
+            _create_pdf(source, ["ONE", "TWO", "THREE"])
+
+            outputs = pdf_ops.split_pdf(
+                source_path=source,
+                password=None,
+                split_starts=set(),
+                section_names={1: "rotated"},
+                page_rotations={2: 90},
+                page_order=[2, 1, 3],
+                output_dir=root,
+            )
+
+            doc = fitz.open(str(outputs[0]))
+            try:
+                first_page = doc.load_page(0)
+                self.assertIn("TWO", first_page.get_text())
+                self.assertAlmostEqual(first_page.rect.width, 400.0, places=1)
+                self.assertAlmostEqual(first_page.rect.height, 300.0, places=1)
+            finally:
+                doc.close()
+
+    def test_split_pdf_split_markers_follow_moved_page_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.pdf"
+            _create_pdf(source, ["ONE", "TWO", "THREE", "FOUR"])
+
+            outputs = pdf_ops.split_pdf(
+                source_path=source,
+                password=None,
+                split_starts={2},
+                section_names={1: "first", 2: "second"},
+                page_rotations={},
+                page_order=[1, 3, 2, 4],
+                output_dir=root,
+            )
+
+            self.assertEqual([path.name for path in outputs], ["first.pdf", "second.pdf"])
+            first_doc = fitz.open(str(outputs[0]))
+            second_doc = fitz.open(str(outputs[1]))
+            try:
+                self.assertEqual(first_doc.page_count, 1)
+                self.assertIn("ONE", first_doc.load_page(0).get_text())
+                self.assertEqual(second_doc.page_count, 3)
+                self.assertIn("THREE", second_doc.load_page(0).get_text())
+                self.assertIn("TWO", second_doc.load_page(1).get_text())
+                self.assertIn("FOUR", second_doc.load_page(2).get_text())
+            finally:
+                first_doc.close()
+                second_doc.close()
+
+    def test_split_pdf_optionally_deletes_source_after_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.pdf"
+            _create_pdf(source, ["ONE", "TWO"])
+
+            outputs = pdf_ops.split_pdf(
+                source_path=source,
+                password=None,
+                split_starts=set(),
+                section_names={1: "out"},
+                page_rotations={},
+                delete_source=True,
+                output_dir=root,
+            )
+
+            self.assertEqual([path.name for path in outputs], ["out.pdf"])
+            self.assertFalse(source.exists())
+            self.assertTrue(outputs[0].exists())
+
 
 class LauncherParseTests(unittest.TestCase):
     def test_parse_args_keeps_existing_split_behavior(self) -> None:
