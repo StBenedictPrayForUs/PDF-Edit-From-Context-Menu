@@ -7,6 +7,24 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $ProjectRoot
 
+function Get-TrayProcesses {
+    Get-CimInstance Win32_Process |
+        Where-Object {
+            $_.Name -match 'pythonw?\.exe' -and
+            ($_.CommandLine -match 'run_tray\.py' -or $_.CommandLine -match 'app\.tray_runtime')
+        }
+}
+
+function Stop-TrayProcesses {
+    $Processes = @(Get-TrayProcesses)
+    foreach ($Process in $Processes) {
+        Stop-Process -Id $Process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    if ($Processes.Count -gt 0) {
+        Start-Sleep -Seconds 1
+    }
+}
+
 $PythonExe = $null
 $PyCmd = Get-Command py -ErrorAction SilentlyContinue
 
@@ -94,6 +112,12 @@ foreach ($Extension in $ImageExtensions) {
 $StartupFolder = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
 $ShortcutPath = Join-Path $StartupFolder 'PDF Splitter Tray.lnk'
 
+Stop-TrayProcesses
+
+if (Test-Path $ShortcutPath) {
+    Remove-Item $ShortcutPath -Force
+}
+
 $Wsh = New-Object -ComObject WScript.Shell
 $Shortcut = $Wsh.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = $PythonwExe
@@ -104,6 +128,21 @@ $Shortcut.Save()
 
 Start-Process -FilePath $PythonwExe -ArgumentList ('"{0}"' -f $TrayScript) -WorkingDirectory $ProjectRoot -WindowStyle Hidden
 
+for ($Attempt = 0; $Attempt -lt 10; $Attempt++) {
+    Start-Sleep -Seconds 1
+    $TrayProcesses = @(Get-TrayProcesses)
+    if ($TrayProcesses.Count -ge 1) {
+        break
+    }
+}
+
+if ($TrayProcesses.Count -ne 1) {
+    if ($TrayProcesses.Count -gt 1) {
+        Stop-TrayProcesses
+    }
+    throw "Tray launch verification failed. Expected 1 running tray process, found $($TrayProcesses.Count)."
+}
+
 Write-Host 'Install complete.'
 Write-Host 'Context menu entries registered for current user.'
-Write-Host 'Tray startup shortcut created and app launched.'
+Write-Host 'Tray startup shortcut recreated and app launched.'
