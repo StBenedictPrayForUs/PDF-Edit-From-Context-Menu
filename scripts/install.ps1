@@ -82,7 +82,7 @@ foreach ($Extension in $CombineExtensions) {
     New-ItemProperty -Path $CombineShellRoot -Name 'MultiSelectModel' -Value 'Player' -PropertyType String -Force | Out-Null
 
     New-Item -Path $CombineCommandKey -Force | Out-Null
-    $CombineCommandValue = '"{0}" "{1}" combine --from-explorer-selection %*' -f $PythonwExe, $LauncherScript
+    $CombineCommandValue = '"{0}" "{1}" combine --from-explorer-selection "%1" %*' -f $PythonwExe, $LauncherScript
     New-ItemProperty -Path $CombineCommandKey -Name '(default)' -Value $CombineCommandValue -PropertyType String -Force | Out-Null
 }
 
@@ -105,7 +105,7 @@ foreach ($Extension in $ImageExtensions) {
     New-ItemProperty -Path $ConvertShellRoot -Name 'MultiSelectModel' -Value 'Player' -PropertyType String -Force | Out-Null
 
     New-Item -Path $ConvertCommandKey -Force | Out-Null
-    $ConvertCommandValue = '"{0}" "{1}" convert-image --from-explorer-selection %*' -f $PythonwExe, $LauncherScript
+    $ConvertCommandValue = '"{0}" "{1}" convert-image --from-explorer-selection "%1" %*' -f $PythonwExe, $LauncherScript
     New-ItemProperty -Path $ConvertCommandKey -Name '(default)' -Value $ConvertCommandValue -PropertyType String -Force | Out-Null
 }
 

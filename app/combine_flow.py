@@ -7,7 +7,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import pdf_ops
+from . import output_settings, pdf_ops
 
 
 class CombineProgressWindow(QWidget):
@@ -198,8 +198,13 @@ def run_combine_dialog(raw_paths: list[str]) -> int:
 
         app = QApplication.instance() or QApplication([])
         app.setQuitOnLastWindowClosed(False)
+        settings = QSettings("RMRR", "PDF Splitter")
 
         suggested_path = pdf_ops.default_combined_output_path(source_paths)
+        suggested_path = output_settings.apply_last_output_dir(
+            suggested_path,
+            output_settings.load_last_output_dir(settings),
+        )
         logging.info("Opening save dialog for combined output. Suggested path=%s", suggested_path)
         chosen_path = _prompt_save_path("Save Combined PDF", suggested_path)
         if not chosen_path:
@@ -209,6 +214,7 @@ def run_combine_dialog(raw_paths: list[str]) -> int:
         destination = Path(chosen_path)
         if destination.suffix.lower() != ".pdf":
             destination = destination.with_suffix(".pdf")
+        output_settings.save_last_output_dir(settings, destination.parent)
         logging.info("Combine save dialog returned destination=%s", destination)
 
         progress_window = CombineProgressWindow(
@@ -261,11 +267,16 @@ def run_convert_image_dialog(raw_paths: list[str]) -> int:
 
         app = QApplication.instance() or QApplication([])
         app.setQuitOnLastWindowClosed(False)
+        settings = QSettings("RMRR", "PDF Splitter")
 
         if len(source_paths) == 1:
             suggested_path = source_paths[0].with_suffix(".pdf")
         else:
             suggested_path = pdf_ops.default_combined_output_path(source_paths)
+        suggested_path = output_settings.apply_last_output_dir(
+            suggested_path,
+            output_settings.load_last_output_dir(settings),
+        )
         logging.info("Opening save dialog for converted image. Suggested path=%s", suggested_path)
         chosen_path = _prompt_save_path("Save PDF", suggested_path)
         if not chosen_path:
@@ -275,6 +286,7 @@ def run_convert_image_dialog(raw_paths: list[str]) -> int:
         destination = Path(chosen_path)
         if destination.suffix.lower() != ".pdf":
             destination = destination.with_suffix(".pdf")
+        output_settings.save_last_output_dir(settings, destination.parent)
         logging.info("Convert image save dialog returned destination=%s", destination)
 
         progress_window = CombineProgressWindow(

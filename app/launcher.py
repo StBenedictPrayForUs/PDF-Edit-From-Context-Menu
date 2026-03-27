@@ -53,6 +53,17 @@ def _send_action_via_ipc(action: str, paths: list[str]) -> bool:
     return send_message({"action": action, "paths": paths}, timeout=1.2)
 
 
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    unique_paths: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique_paths.append(path)
+    return unique_paths
+
+
 def parse_args(argv: list[str]) -> tuple[str, list[str]]:
     if argv and argv[0].lower() == "combine":
         remaining = list(argv[1:])
@@ -75,6 +86,7 @@ def parse_args(argv: list[str]) -> tuple[str, list[str]]:
                 continue
             sources.append(arg)
 
+        sources = _dedupe_paths(sources)
         if use_explorer_selection:
             sources.insert(0, "--from-explorer-selection")
         return "combine", sources
@@ -100,6 +112,7 @@ def parse_args(argv: list[str]) -> tuple[str, list[str]]:
                 continue
             sources.append(arg)
 
+        sources = _dedupe_paths(sources)
         if use_explorer_selection:
             sources.insert(0, "--from-explorer-selection")
         return "convert-image", sources

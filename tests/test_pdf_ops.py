@@ -5,7 +5,7 @@ from pathlib import Path
 import fitz
 from PySide6.QtGui import QColor, QImage
 
-from app import launcher, pdf_ops
+from app import launcher, output_settings, pdf_ops
 
 
 def _create_pdf(path: Path, labels: list[str]) -> None:
@@ -27,6 +27,14 @@ def _create_image(path: Path, width: int, height: int, color_name: str) -> None:
 
 
 class PdfOpsTests(unittest.TestCase):
+    def test_apply_last_output_dir_prefers_saved_directory(self) -> None:
+        suggested = Path(r"C:\source\combined.pdf")
+        last_output = Path(r"C:\saved")
+
+        destination = output_settings.apply_last_output_dir(suggested, last_output)
+
+        self.assertEqual(destination, Path(r"C:\saved\combined.pdf"))
+
     def test_compute_sections_returns_empty_for_zero_page_pdf(self) -> None:
         self.assertEqual(pdf_ops.compute_sections(0, {1}), [])
 
@@ -331,6 +339,26 @@ class LauncherParseTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_args_deduplicates_first_combine_source_when_percent_one_and_percent_star_overlap(self) -> None:
+        mode, paths = launcher.parse_args(
+            [
+                "combine",
+                "--from-explorer-selection",
+                r"C:\Docs\one file.pdf",
+                r"C:\Docs\one file.pdf",
+                r"C:\Docs\scan 1.png",
+            ]
+        )
+        self.assertEqual(mode, "combine")
+        self.assertEqual(
+            paths,
+            [
+                "--from-explorer-selection",
+                r"C:\Docs\one file.pdf",
+                r"C:\Docs\scan 1.png",
+            ],
+        )
+
     def test_parse_args_supports_convert_image_mode(self) -> None:
         mode, paths = launcher.parse_args(["convert-image", r"C:\Docs\scan 1.png"])
         self.assertEqual(mode, "convert-image")
@@ -341,6 +369,43 @@ class LauncherParseTests(unittest.TestCase):
             [
                 "convert-image",
                 "--from-explorer-selection",
+                r"C:\Docs\scan 1.png",
+                r"C:\Docs\scan 2.jpg",
+            ]
+        )
+        self.assertEqual(mode, "convert-image")
+        self.assertEqual(
+            paths,
+            [
+                "--from-explorer-selection",
+                r"C:\Docs\scan 1.png",
+                r"C:\Docs\scan 2.jpg",
+            ],
+        )
+
+    def test_parse_args_keeps_first_convert_image_source_when_explorer_selection_is_unavailable(self) -> None:
+        mode, paths = launcher.parse_args(
+            [
+                "convert-image",
+                "--from-explorer-selection",
+                r"C:\Docs\scan 1.png",
+            ]
+        )
+        self.assertEqual(mode, "convert-image")
+        self.assertEqual(
+            paths,
+            [
+                "--from-explorer-selection",
+                r"C:\Docs\scan 1.png",
+            ],
+        )
+
+    def test_parse_args_deduplicates_first_convert_image_source_when_percent_one_and_percent_star_overlap(self) -> None:
+        mode, paths = launcher.parse_args(
+            [
+                "convert-image",
+                "--from-explorer-selection",
+                r"C:\Docs\scan 1.png",
                 r"C:\Docs\scan 1.png",
                 r"C:\Docs\scan 2.jpg",
             ]
