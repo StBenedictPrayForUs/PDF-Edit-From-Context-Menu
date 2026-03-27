@@ -26,6 +26,10 @@ This will:
 - create a startup shortcut so the tray app launches at logon
 - launch the tray app now
 
+Important:
+- The install registers the current cloned checkout as the live app location.
+- If you move, rename, or delete this project folder later, Explorer integration and tray startup will break until you run `./scripts/uninstall.ps1` and then `./scripts/install.ps1` from the new location.
+
 ## 2) Use
 
 - Right-click any PDF in File Explorer -> `Split PDF...`
