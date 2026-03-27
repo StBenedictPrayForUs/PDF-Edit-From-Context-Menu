@@ -1,6 +1,6 @@
 # PDF Editor: Windows Context Menu (Personal Windows Utility)
 
-A local Windows-only PDF creation/manipultion utility focused on handling files from the context menu in file explorer.
+A local Windows-only PDF creation/manipulation utility focused on handling files from the context menu in file explorer.
 
 - tray startup (always available)
 - File Explorer right-click action for converting images to PDF
