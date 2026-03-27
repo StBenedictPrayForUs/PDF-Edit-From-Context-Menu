@@ -1,4 +1,4 @@
-# PDF Splitter (Personal Windows Utility)
+# PDF Editor: Windows Context Menu (Personal Windows Utility)
 
 A local Windows-only PDF splitting utility with:
 - tray startup (always available)
