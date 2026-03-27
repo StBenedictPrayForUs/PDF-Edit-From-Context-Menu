@@ -1,10 +1,10 @@
 # PDF Editor: Windows Context Menu (Personal Windows Utility)
 
-A local Windows-only PDF splitting utility with:
+A local Windows-only PDF creation/manipultion utility focused on handling files from the context menu in file explorer.
+
 - tray startup (always available)
-- File Explorer right-click action for `.pdf`
-- File Explorer right-click action for combining PDFs + images
-- File Explorer right-click action for converting one image to PDF
+- File Explorer right-click action for converting images to PDF
+- File Explorer right-click action for combining and splitting PDFs + images
 - visual page list with split starts
 - per-page rotation in 90-degree steps
 - editable output names with defaults
@@ -19,6 +19,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 ```
 
 This will:
+
 - install dependencies from `requirements.txt`
 - register `Split PDF...` in your PDF right-click menu (current user)
 - register `Combine to PDF...` for PDFs and common image files (current user)
@@ -27,6 +28,7 @@ This will:
 - launch the tray app now
 
 Important:
+
 - The install registers the current cloned checkout as the live app location.
 - If you move, rename, or delete this project folder later, Explorer integration and tray startup will break until you run `./scripts/uninstall.ps1` and then `./scripts/install.ps1` from the new location.
 
