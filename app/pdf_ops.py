@@ -24,6 +24,7 @@ SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", 
 SUPPORTED_COMBINE_EXTENSIONS = {".pdf", *SUPPORTED_IMAGE_EXTENSIONS}
 BALANCED_MAX_IMAGE_DIMENSION = 2200
 BALANCED_JPEG_QUALITY = 78
+OUTLOOK_ATTACHMENT_MAX_IMAGE_DIMENSION = 1200
 
 
 class PasswordRequiredError(Exception):
@@ -54,6 +55,10 @@ class CompressionProfile:
 
 BALANCED_COMPRESSION = CompressionProfile(
     max_dimension=BALANCED_MAX_IMAGE_DIMENSION,
+    jpeg_quality=BALANCED_JPEG_QUALITY,
+)
+OUTLOOK_ATTACHMENT_COMPRESSION = CompressionProfile(
+    max_dimension=OUTLOOK_ATTACHMENT_MAX_IMAGE_DIMENSION,
     jpeg_quality=BALANCED_JPEG_QUALITY,
 )
 
@@ -208,9 +213,11 @@ def _default_output_directory(source_paths: list[Path]) -> Path:
 
 
 def _compression_profile(name: str) -> CompressionProfile:
-    if name != "balanced":
-        raise ValueError(f"Unsupported compression profile: {name}")
-    return BALANCED_COMPRESSION
+    if name == "balanced":
+        return BALANCED_COMPRESSION
+    if name == "outlook-attachment":
+        return OUTLOOK_ATTACHMENT_COMPRESSION
+    raise ValueError(f"Unsupported compression profile: {name}")
 
 
 def _append_pdf(target: fitz.Document, source_path: Path) -> None:
