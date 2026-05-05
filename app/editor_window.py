@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import output_settings, pdf_ops
+from . import pdf_ops
 
 
 class ClickableLabel(QLabel):
@@ -675,7 +675,7 @@ class PdfEditorWindow(QMainWindow):
             names[start] = text or default_name
 
         try:
-            output_dir = output_settings.load_last_output_dir(self.settings) or self.metadata.source_path.parent
+            output_dir = self.metadata.source_path.parent
             outputs = pdf_ops.split_pdf(
                 source_path=self.metadata.source_path,
                 password=self.password,
@@ -690,7 +690,6 @@ class PdfEditorWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed", str(exc))
             return
 
-        output_settings.save_last_output_dir(self.settings, output_dir)
         delete_source = self.delete_source_checkbox.isChecked()
         self._clear_loaded_pdf()
         msg = f"Wrote {len(outputs)} file(s) to:\n{output_dir}"
