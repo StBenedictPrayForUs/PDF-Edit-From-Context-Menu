@@ -46,7 +46,7 @@ Important:
 - Multi-select PDFs in File Explorer -> `Combine to PDF...`
 - The combine flow opens only a standard Windows save dialog.
 - The save dialog defaults to the source folder and suggests `combined.pdf`.
-- Supported image types: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`, `.webp`
+- Supported image types: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tif`, `.tiff`, `.webp`, `.heic`, `.heif`
 - Images are compressed with a balanced profile before being written into the merged PDF.
 - On success, the merged PDF opens automatically and the original selected source files are deleted.
 

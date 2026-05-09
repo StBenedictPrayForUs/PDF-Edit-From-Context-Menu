@@ -86,7 +86,7 @@ foreach ($Extension in $CombineExtensions) {
     New-ItemProperty -Path $CombineCommandKey -Name '(default)' -Value $CombineCommandValue -PropertyType String -Force | Out-Null
 }
 
-$StaleImageCombineExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp')
+$StaleImageCombineExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp', '.heic', '.heif')
 foreach ($Extension in $StaleImageCombineExtensions) {
     $StaleCombineShellRoot = "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\RMRRCombineToPDF"
     if (Test-Path $StaleCombineShellRoot) {
@@ -94,7 +94,7 @@ foreach ($Extension in $StaleImageCombineExtensions) {
     }
 }
 
-$ImageExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp')
+$ImageExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp', '.heic', '.heif')
 foreach ($Extension in $ImageExtensions) {
     $ConvertShellRoot = "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\RMRRConvertImageToPDF"
     $ConvertCommandKey = Join-Path $ConvertShellRoot 'command'

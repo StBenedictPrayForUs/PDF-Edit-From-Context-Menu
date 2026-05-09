@@ -22,7 +22,7 @@ if (Test-Path $SplitShellRoot) {
     Remove-Item -Path $SplitShellRoot -Recurse -Force
 }
 
-$CombineExtensions = @('.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp')
+$CombineExtensions = @('.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp', '.heic', '.heif')
 foreach ($Extension in $CombineExtensions) {
     $CombineShellRoot = "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\RMRRCombineToPDF"
     if (Test-Path $CombineShellRoot) {
@@ -30,7 +30,7 @@ foreach ($Extension in $CombineExtensions) {
     }
 }
 
-$ImageExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp')
+$ImageExtensions = @('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp', '.heic', '.heif')
 foreach ($Extension in $ImageExtensions) {
     $ConvertShellRoot = "HKCU:\Software\Classes\SystemFileAssociations\$Extension\shell\RMRRConvertImageToPDF"
     if (Test-Path $ConvertShellRoot) {

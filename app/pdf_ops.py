@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 import logging
 from pathlib import Path
 import math
@@ -20,7 +21,17 @@ WINDOWS_RESERVED_NAMES = {
     *(f"LPT{i}" for i in range(1, 10)),
 }
 
-SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+HEIC_IMAGE_EXTENSIONS = {".heic", ".heif"}
+SUPPORTED_IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".webp",
+    *HEIC_IMAGE_EXTENSIONS,
+}
 SUPPORTED_COMBINE_EXTENSIONS = {".pdf", *SUPPORTED_IMAGE_EXTENSIONS}
 BALANCED_MAX_IMAGE_DIMENSION = 2200
 BALANCED_JPEG_QUALITY = 78
@@ -231,6 +242,10 @@ def _append_pdf(target: fitz.Document, source_path: Path) -> None:
 
 def _append_image(target: fitz.Document, source_path: Path, profile: CompressionProfile) -> None:
     logging.info("Appending image source: %s", source_path)
+    if source_path.suffix.lower() in HEIC_IMAGE_EXTENSIONS:
+        _append_heic_image(target, source_path, profile)
+        return
+
     image_doc = fitz.open(str(source_path))
     try:
         keep_original = source_path.suffix.lower() in {".jpg", ".jpeg"} and _can_keep_original_image(
@@ -265,6 +280,40 @@ def _append_image(target: fitz.Document, source_path: Path, profile: Compression
             )
     finally:
         image_doc.close()
+
+
+def _append_heic_image(target: fitz.Document, source_path: Path, profile: CompressionProfile) -> None:
+    try:
+        from PIL import Image, ImageOps, ImageSequence
+        from pillow_heif import register_heif_opener
+    except ImportError as exc:
+        raise UnsupportedSourceError(
+            "HEIC support requires Pillow and pillow-heif. Install requirements.txt and try again."
+        ) from exc
+
+    register_heif_opener()
+    with Image.open(source_path) as image:
+        for frame_index, frame in enumerate(ImageSequence.Iterator(image), start=1):
+            normalized = ImageOps.exif_transpose(frame).convert("RGB")
+            normalized.thumbnail(
+                (profile.max_dimension, profile.max_dimension),
+                Image.Resampling.LANCZOS,
+            )
+
+            buffer = BytesIO()
+            normalized.save(buffer, format="JPEG", quality=profile.jpeg_quality, optimize=True)
+            jpeg_bytes = buffer.getvalue()
+            width, height = normalized.size
+            logging.info(
+                "Converted HEIC frame %s from %s to %sx%s JPEG",
+                frame_index,
+                source_path.name,
+                width,
+                height,
+            )
+
+            output_page = target.new_page(width=max(float(width), 1.0), height=max(float(height), 1.0))
+            output_page.insert_image(output_page.rect, stream=jpeg_bytes)
 
 
 def _can_keep_original_image(image_doc: fitz.Document, profile: CompressionProfile) -> bool:
