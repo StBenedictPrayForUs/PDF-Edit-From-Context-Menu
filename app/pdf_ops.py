@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 import logging
+import os
 from pathlib import Path
 import math
 import re
+import tempfile
 from typing import Callable, Iterable
 
 import fitz
@@ -160,6 +162,61 @@ def normalize_page_order(page_count: int, page_order: Iterable[int] | None = Non
         raise ValueError("Page order must include every page exactly once.")
 
     return ordered
+
+
+def save_edited_pdf(
+    source_path: str | Path,
+    destination_path: str | Path,
+    password: str | None,
+    page_rotations: dict[int, int],
+    page_order: Iterable[int] | None = None,
+) -> Path:
+    """Save reordered/rotated pages, replacing the destination only after a successful write."""
+    source = Path(source_path).resolve()
+    destination = Path(destination_path).resolve()
+    if destination.suffix.lower() != ".pdf":
+        destination = destination.with_suffix(".pdf")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_path: Path | None = None
+    try:
+        doc = fitz.open(str(source))
+        try:
+            if doc.needs_pass:
+                if password is None:
+                    raise PasswordRequiredError("PDF is password protected.")
+                if not doc.authenticate(password):
+                    raise InvalidPasswordError("Invalid password.")
+
+            ordered_pages = normalize_page_order(doc.page_count, page_order)
+            doc.select([page - 1 for page in ordered_pages])
+            for output_index, source_page in enumerate(ordered_pages):
+                delta = int(page_rotations.get(source_page, 0)) % 360
+                if delta:
+                    page = doc.load_page(output_index)
+                    page.set_rotation((page.rotation + delta) % 360)
+
+            fd, temp_name = tempfile.mkstemp(
+                prefix=f".{destination.stem}-",
+                suffix=".tmp.pdf",
+                dir=str(destination.parent),
+            )
+            os.close(fd)
+            temp_path = Path(temp_name)
+            doc.save(str(temp_path), garbage=3, deflate=True)
+        finally:
+            doc.close()
+
+        if temp_path is None:
+            raise RuntimeError("Could not create a temporary PDF for saving.")
+        os.replace(temp_path, destination)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+    logging.info("Edited PDF saved: %s", destination)
+    return destination
 
 
 def sanitize_filename(name: str, fallback: str) -> str:

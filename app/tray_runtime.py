@@ -30,11 +30,11 @@ class TrayRuntime:
 
         self.server = IpcServer(self.bridge.received.emit)
         if not self.server.start():
-            raise RuntimeError("Another PDF Splitter tray instance is already running.")
+            raise RuntimeError("Another PDF Page Editor tray instance is already running.")
         logging.info("Tray runtime started and IPC server listening.")
 
         self.tray = QSystemTrayIcon(self._icon())
-        self.tray.setToolTip("PDF Splitter")
+        self.tray.setToolTip("PDF Page Editor")
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.setContextMenu(self._build_menu())
         self.tray.show()
@@ -88,7 +88,7 @@ class TrayRuntime:
             loaded = window.load_pdf(resolved)
         except Exception:
             logging.exception("Unhandled error while opening PDF: %s", resolved)
-            QMessageBox.critical(None, "PDF Splitter Error", "Unexpected error while opening PDF.")
+            QMessageBox.critical(None, "PDF Page Editor Error", "Unexpected error while opening PDF.")
             return
         if not loaded:
             logging.warning("PDF load was canceled or failed: %s", resolved)
@@ -153,7 +153,7 @@ def main() -> int:
         runtime = TrayRuntime(app)
     except RuntimeError as exc:
         logging.info("Tray startup aborted: %s", exc)
-        QMessageBox.information(None, "PDF Splitter", str(exc))
+        QMessageBox.information(None, "PDF Page Editor", str(exc))
         return 0
 
     if args.pdf:

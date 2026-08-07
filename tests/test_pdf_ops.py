@@ -306,6 +306,53 @@ class PdfOpsTests(unittest.TestCase):
             self.assertFalse(source.exists())
             self.assertTrue(outputs[0].exists())
 
+    def test_save_edited_pdf_writes_edited_copy_with_page_order_and_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.pdf"
+            destination = root / "source_Edited.pdf"
+            _create_pdf(source, ["ONE", "TWO", "THREE"])
+
+            result = pdf_ops.save_edited_pdf(
+                source_path=source,
+                destination_path=destination,
+                password=None,
+                page_rotations={2: 90},
+                page_order=[2, 1, 3],
+            )
+
+            self.assertEqual(result, destination.resolve())
+            self.assertTrue(source.exists())
+            doc = fitz.open(str(destination))
+            try:
+                self.assertIn("TWO", doc.load_page(0).get_text())
+                self.assertEqual(doc.load_page(0).rotation, 90)
+                self.assertIn("ONE", doc.load_page(1).get_text())
+            finally:
+                doc.close()
+
+    def test_save_edited_pdf_can_atomically_replace_original(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.pdf"
+            _create_pdf(source, ["ONE", "TWO"])
+
+            result = pdf_ops.save_edited_pdf(
+                source_path=source,
+                destination_path=source,
+                password=None,
+                page_rotations={},
+                page_order=[2, 1],
+            )
+
+            self.assertEqual(result, source.resolve())
+            doc = fitz.open(str(source))
+            try:
+                self.assertEqual(doc.page_count, 2)
+                self.assertIn("TWO", doc.load_page(0).get_text())
+                self.assertIn("ONE", doc.load_page(1).get_text())
+            finally:
+                doc.close()
+
 
 class LauncherParseTests(unittest.TestCase):
     def test_parse_args_keeps_existing_split_behavior(self) -> None:

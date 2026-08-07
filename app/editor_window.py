@@ -152,10 +152,11 @@ class PageRowWidget(QWidget):
 
 class PdfEditorWindow(QMainWindow):
     DELETE_SOURCE_SETTING_KEY = "split/delete_source_after_export"
+    REPLACE_ORIGINAL_SETTING_KEY = "editor/replace_original"
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("PDF Splitter")
+        self.setWindowTitle("PDF Page Editor")
         self.resize(1280, 820)
         self.settings = QSettings("RMRR", "PDF Splitter")
 
@@ -207,13 +208,27 @@ class PdfEditorWindow(QMainWindow):
         page_down_btn.clicked.connect(lambda: self._page_scroll(1))
         action_bar.addWidget(page_down_btn)
 
-        self.delete_source_checkbox = QCheckBox("Delete source after split")
+        self.replace_original_checkbox = QCheckBox("Replace original")
+        self.replace_original_checkbox.setChecked(self._load_replace_original_setting())
+        self.replace_original_checkbox.setToolTip(
+            "When checked, Save Changes safely replaces the open PDF after writing succeeds."
+        )
+        self.replace_original_checkbox.toggled.connect(self._replace_original_toggled)
+        action_bar.addWidget(self.replace_original_checkbox)
+
+        self.save_btn = QPushButton()
+        self.save_btn.setStyleSheet("font-weight: bold; padding: 6px 16px;")
+        self.save_btn.clicked.connect(self._save_edited_pdf)
+        action_bar.addWidget(self.save_btn)
+        self._update_save_button()
+
+        self.delete_source_checkbox = QCheckBox("Delete source after split export")
         self.delete_source_checkbox.setChecked(self._load_delete_source_setting())
         self.delete_source_checkbox.toggled.connect(self._save_delete_source_setting)
         action_bar.addWidget(self.delete_source_checkbox)
         action_bar.addStretch(1)
 
-        export_btn = QPushButton("Export Splits")
+        export_btn = QPushButton("Export Splits...")
         export_btn.clicked.connect(self._export)
         action_bar.addWidget(export_btn)
         layout.addLayout(action_bar)
@@ -235,11 +250,14 @@ class PdfEditorWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
 
         hint = QLabel(
-            "How to use:\n"
+            "Page editing:\n"
+            "- Use the arrow buttons to reorder pages.\n"
+            "- Use the rotate buttons beside each page.\n"
+            "- Save Changes replaces the original by default; turn that option off to Save As.\n\n"
+            "Splitting:\n"
             "- Click the page image to mark split starts.\n"
             "- Page 1 is always the first section start.\n"
-            "- Use the arrow buttons to move pages up or down for export.\n"
-            "- Use the rotate buttons beside each page to rotate."
+            "- Use Export Splits to write the named sections below."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(window-text);")
@@ -333,18 +351,18 @@ class PdfEditorWindow(QMainWindow):
 
     def _restore_window_header(self) -> None:
         if self.metadata is None:
-            self.setWindowTitle("PDF Splitter")
+            self.setWindowTitle("PDF Page Editor")
             self.file_label.setText("No PDF loaded")
             return
 
-        self.setWindowTitle(f"PDF Splitter - {self.metadata.source_path.name}")
+        self.setWindowTitle(f"PDF Page Editor - {self.metadata.source_path.name}")
         self.file_label.setText(str(self.metadata.source_path))
 
     def load_pdf(self, path: str | Path) -> bool:
         path = str(Path(path).resolve())
         logging.info("Editor requested to load PDF: %s", path)
         password: str | None = None
-        self.setWindowTitle("PDF Splitter - Loading...")
+        self.setWindowTitle("PDF Page Editor - Loading...")
         self.file_label.setText(path)
         self.bring_to_front()
         QApplication.processEvents()
@@ -385,7 +403,7 @@ class PdfEditorWindow(QMainWindow):
         self.metadata = metadata
         self.password = password
         self.file_label.setText(str(metadata.source_path))
-        self.setWindowTitle(f"PDF Splitter - {metadata.source_path.name}")
+        self.setWindowTitle(f"PDF Page Editor - {metadata.source_path.name}")
 
         self._reset_loaded_document_state()
         self.page_order = list(range(1, metadata.page_count + 1))
@@ -404,6 +422,21 @@ class PdfEditorWindow(QMainWindow):
 
     def _save_delete_source_setting(self, checked: bool) -> None:
         self.settings.setValue(self.DELETE_SOURCE_SETTING_KEY, checked)
+
+    def _load_replace_original_setting(self) -> bool:
+        return bool(self.settings.value(self.REPLACE_ORIGINAL_SETTING_KEY, True, bool))
+
+    def _replace_original_toggled(self, checked: bool) -> None:
+        self.settings.setValue(self.REPLACE_ORIGINAL_SETTING_KEY, checked)
+        self._update_save_button()
+
+    def _update_save_button(self) -> None:
+        if self.replace_original_checkbox.isChecked():
+            self.save_btn.setText("Save Changes")
+            self.save_btn.setToolTip("Safely replace the original PDF")
+        else:
+            self.save_btn.setText("Save As...")
+            self.save_btn.setToolTip("Save an edited copy of the PDF")
 
     def _clear_section_names_ui(self) -> None:
         while self.section_layout.count():
@@ -657,6 +690,52 @@ class PdfEditorWindow(QMainWindow):
 
     def _on_section_name_changed(self, start_page: int, text: str) -> None:
         self.section_name_overrides[start_page] = text
+
+    def _save_edited_pdf(self) -> None:
+        if self.metadata is None:
+            QMessageBox.information(self, "Nothing to Save", "Load a PDF first.")
+            return
+
+        source = self.metadata.source_path
+        replace_original = self.replace_original_checkbox.isChecked()
+        if replace_original:
+            answer = QMessageBox.question(
+                self,
+                "Replace Original PDF?",
+                f"Replace the original PDF with the reordered and rotated version?\n\n{source}",
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            destination = source
+        else:
+            suggested = source.with_name(f"{source.stem}_Edited.pdf")
+            chosen, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Edited PDF As",
+                str(suggested),
+                "PDF Files (*.pdf)",
+            )
+            if not chosen:
+                return
+            destination = Path(chosen)
+
+        try:
+            saved_path = pdf_ops.save_edited_pdf(
+                source_path=source,
+                destination_path=destination,
+                password=self.password,
+                page_rotations=self.page_rotations,
+                page_order=self.page_order,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Save Failed", str(exc))
+            return
+
+        self.load_pdf(saved_path)
+        action = "Replaced the original PDF" if replace_original else "Saved the edited PDF"
+        QMessageBox.information(self, "Save Complete", f"{action}:\n{saved_path}")
 
     def _export(self) -> None:
         if self.metadata is None:

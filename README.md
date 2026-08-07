@@ -1,4 +1,4 @@
-# PDF Editor: Windows Context Menu (Personal Windows Utility)
+# PDF Page Editor: Windows Context Menu (Personal Windows Utility)
 
 A local Windows-only PDF creation/manipulation utility focused on handling files from the context menu in file explorer.
 
@@ -7,6 +7,7 @@ A local Windows-only PDF creation/manipulation utility focused on handling files
 - File Explorer right-click action for combining and splitting PDFs + images
 - visual page list with split starts
 - per-page rotation in 90-degree steps
+- page reordering with safe replace-original or Save As output
 - editable output names with defaults
 
 ## 1) Install
@@ -36,6 +37,8 @@ Important:
 
 - Right-click any PDF in File Explorer -> `Split PDF...`
 - In the app:
+  - move or rotate pages, then use `Save Changes` to replace the original safely
+  - turn off `Replace original` to use `Save As...` with an `_Edited.pdf` default name
   - check `Start split here` on pages that begin a new output file
   - edit section names on the right
   - optionally rotate selected pages with `Rotate -90` / `Rotate +90`
@@ -65,6 +68,8 @@ python -m app.launcher combine "C:\path\to\file1.pdf" "C:\path\to\image.png"
 python -m app.launcher convert-image "C:\path\to\image.png"
 python -m app.launcher convert-image "C:\path\to\image1.png" "C:\path\to\image2.jpg"
 ```
+
+The same launcher command can be registered as a SumatraPDF external viewer so the current PDF opens directly in the page editor.
 
 ## 4) Uninstall
 
