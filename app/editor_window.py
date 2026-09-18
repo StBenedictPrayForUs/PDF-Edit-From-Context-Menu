@@ -229,7 +229,7 @@ class PdfEditorWindow(QMainWindow):
         action_bar.addStretch(1)
 
         export_btn = QPushButton("Export Splits...")
-        export_btn.clicked.connect(self._export)
+        export_btn.clicked.connect(lambda: self._export())
         action_bar.addWidget(export_btn)
         layout.addLayout(action_bar)
 
@@ -247,9 +247,10 @@ class PdfEditorWindow(QMainWindow):
         splitter.addWidget(self.page_list)
 
         right_panel = QWidget()
+        self.right_panel = right_panel
         right_layout = QVBoxLayout(right_panel)
 
-        hint = QLabel(
+        hint = self.hint_label = QLabel(
             "Page editing:\n"
             "- Use the arrow buttons to reorder pages.\n"
             "- Use the rotate buttons beside each page.\n"
@@ -263,7 +264,7 @@ class PdfEditorWindow(QMainWindow):
         hint.setStyleSheet("color: palette(window-text);")
 
         right_layout.addWidget(hint)
-        output_label = QLabel("Output section names:")
+        output_label = self.output_label = QLabel("Output section names:")
         output_label.setStyleSheet("color: palette(window-text);")
         right_layout.addWidget(output_label)
 
