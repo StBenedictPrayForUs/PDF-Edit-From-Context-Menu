@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 from datetime import date, datetime
+from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.request import urlopen
 from uuid import uuid4
@@ -37,6 +39,47 @@ def parse_facilities(raw: bytes) -> list[str]:
     if not names:
         raise ValueError("The facilities list contains no names.")
     return names
+
+
+SUBJECT_DATE = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b")
+STOPWORDS = {"the", "at", "of", "and", "a"}
+
+
+def date_from_subject(subject: str, today: date | None = None) -> date | None:
+    """'Brighton 9.2.26' or 'Cherrelyn 9-04-2026 .pdf' -> that date, if it is recent."""
+    match = SUBJECT_DATE.search(subject)
+    if not match:
+        return None
+    month, day, year = (int(part) for part in match.groups())
+    try:
+        found = date(year if year >= 1000 else 2000 + year % 100, month, day)
+    except ValueError:
+        return None
+    return found if abs((found - (today or date.today())).days) <= 60 else None
+
+
+def facility_from_subject(subject: str, facilities: list[str]) -> str | None:
+    """Match the words before the date ('Boulder Post sleep stdy 9.24.26') to one facility.
+
+    The longest leading phrase that resembles a run of words in a facility name wins;
+    an ambiguous phrase ('Lowry') fills nothing.
+    """
+    words = re.findall(r"[a-z0-9]+", SUBJECT_DATE.split(subject.lower().replace("'", ""))[0])
+    spans = []  # (facility, a run of consecutive words from one of its "/" names, joined)
+    for facility in facilities:
+        for alias in facility.lower().replace("'", "").split("/"):
+            tokens = re.findall(r"[a-z0-9]+", alias)
+            spans += [(facility, "".join(tokens[i:j])) for i in range(len(tokens)) for j in range(i + 1, len(tokens) + 1)]
+    for size in range(len(words), 0, -1):
+        phrase = words[:size]
+        joined = "".join(phrase)
+        if all(word in STOPWORDS for word in phrase) or len(joined) < 4:
+            continue
+        # Joined text tolerates spacing and plurals: 'Cityscape' ~ 'City Scape', 'Wellspring' ~ 'Wellsprings'.
+        matches = {facility for facility, span in spans if SequenceMatcher(None, joined, span).ratio() >= 0.9}
+        if matches:
+            return matches.pop() if len(matches) == 1 else None
+    return None
 
 
 def export_cst_batch(source: Path, password: str | None, document_date: date,

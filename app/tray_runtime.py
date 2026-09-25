@@ -16,7 +16,8 @@ from .ipc import IpcServer
 from .logging_utils import configure_logging
 from .combine_flow import run_combine_dialog, run_convert_image_dialog
 from .cst_editor import CstEditorWindow
-from .outlook_intake import INTAKE_DIR, TECHNICIANS, IntakeStore, file_email, poll_outlook
+from .outlook_intake import (INTAKE_DIR, SUBJECT_FACILITY_TECHNICIANS, TECHNICIANS, IntakeStore, file_email,
+                             poll_outlook)
 
 
 class MessageBridge(QObject):
@@ -216,7 +217,7 @@ class TrayRuntime:
         pending = self.intake_store.pending()
         if not pending or pending[0][0] == self.failed_intake_id:
             return
-        key, path, note, technician = pending[0]
+        key, path, note, technician, subject = pending[0]
         window = self._ensure_cst_window()
         if not window.load_pdf(path):
             self.failed_intake_id = key
@@ -225,7 +226,9 @@ class TrayRuntime:
         self.active_intake_id = key
         window.intake_locked = True
         window.technician.setCurrentText(technician)
-        window.intake_note.setText(f"{technician}’s email: " + (note or "No message beyond the signature."))
+        # Ryan sends one facility per email; James's subjects list several.
+        filled = window.prefill_from_subject(subject, facility=technician in SUBJECT_FACILITY_TECHNICIANS)
+        window.intake_note.setText(f"{technician}’s email: " + (note or "No message beyond the signature.") + filled)
         if note:
             QMessageBox.information(window, f"{technician} included a message", note)
 

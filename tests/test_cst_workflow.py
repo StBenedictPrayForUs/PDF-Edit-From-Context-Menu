@@ -15,7 +15,8 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtTest import QTest
 
 from app.cst_editor import CstEditorWindow, FacilityComboBox
-from app.cst_workflow import export_cst_batch, fetch_facilities, parse_facilities
+from app.cst_workflow import (date_from_subject, export_cst_batch, facility_from_subject, fetch_facilities,
+                              parse_facilities)
 from app.outlook_intake import (IntakeStore, MAILBOX, MAPI_E_NOT_FOUND, extra_body_text, prune_left_inbox,
                                 scan_outlook)
 
@@ -116,7 +117,7 @@ class CstWorkflowTests(unittest.TestCase):
                 def GetProperty(self, name):
                     return "ryanmcbride30377@gmail.com" if "5D01001F" in name else "message-id"
             message = SimpleNamespace(Class=43, PropertyAccessor=Accessor(), EntryID="entry",
-                ReceivedTime=datetime.now(timezone.utc), Body="Extra note",
+                ReceivedTime=datetime.now(timezone.utc), Body="Extra note", Subject="Clear Creek 9.1.26",
                 Attachments=SimpleNamespace(Count=1, Item=lambda index: attachment))
             class Items(list):
                 def Restrict(self, query):
@@ -132,11 +133,32 @@ class CstWorkflowTests(unittest.TestCase):
             self.assertEqual(attachment.saves, 1)
             self.assertEqual(len(store.pending()), 1)
             self.assertEqual(Path(store.pending()[0][1]).parent, Path(folder))
-            self.assertEqual(store.pending()[0][2:], ("Extra note", "Ryan"))
+            self.assertEqual(store.pending()[0][2:], ("Extra note", "Ryan", "Clear Creek 9.1.26"))
             # A different sender is ignored. (The date cutoff is Outlook's Restrict.)
             message.PropertyAccessor = SimpleNamespace(GetProperty=lambda _: "other@example.com")
             scan_outlook(namespace, store, since, threading.Event())
             self.assertEqual(attachment.saves, 1)
+
+    def test_subject_names_one_facility_and_date(self):
+        facilities = ["Boulder Canyon", "Boulder Post Acute", "Center at Lowry", "Lowry Hills", "City Scape Care",
+                      "Wellsprings CC/ Elevation Health", "Heights Care & Rehab/ The Heights Post Acute",
+                      "Falcon Heights Health", "Highland Park", "VI at Highlands Ranch"]
+        cases = {"Boulder Post sleep stdy 9.24.26": "Boulder Post Acute",
+                 "Boulder Canyon popin & equip deliv 9.22.26": "Boulder Canyon",
+                 "Cityscape popin cpap swap 9.10.26": "City Scape Care",
+                 "Wellspring 9.3.26": "Wellsprings CC/ Elevation Health",
+                 "The Heights popin and equip deliv 9.22.26": "Heights Care & Rehab/ The Heights Post Acute",
+                 "Highland Park popin 9.18.26": "Highland Park",
+                 "Lowry supply deliv 9.4.26": None, "Boulder 9.4.26": None, "Unknown place 9.4.26": None, "": None}
+        for subject, expected in cases.items():
+            self.assertEqual(facility_from_subject(subject, facilities), expected, subject)
+        today = date(2026, 9, 25)
+        self.assertEqual(date_from_subject("Brighton popin 9.2.26", today), date(2026, 9, 2))
+        self.assertEqual(date_from_subject("Cherrelyn 9-04-2026 .pdf", today), date(2026, 9, 4))
+        self.assertEqual(date_from_subject("Sierra 09-01-026 .pdf", today), date(2026, 9, 1))
+        self.assertIsNone(date_from_subject("Littleton & Sierra.pdf", today))
+        self.assertIsNone(date_from_subject("Brighton 13.2.26", today))
+        self.assertIsNone(date_from_subject("Brighton 9.2.24", today))
 
     def test_dismiss_deletes_copy_and_never_requeues(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -253,6 +275,10 @@ class CstEditorTests(unittest.TestCase):
             window.document_date.setDate(QDate(2026, 9, 17))
             window.findChild(QPushButton, "date_step_-1").click()
             self.assertEqual(window.document_date.date(), QDate(2026, 9, 16))
+            window.prefill_from_subject("Beta popin 9.10.26", facility=False)
+            self.assertEqual(window.facility_inputs[1].currentText(), "")
+            self.assertIn("facility", window.prefill_from_subject("Beta popin 9.10.26", facility=True))
+            self.assertEqual(window.facility_inputs[1].currentText(), "Beta")
             window.facility_inputs[1].setEditText("Alpha")
             window.facility_inputs[3].setEditText("Beta")
             window.page_order = [3, 4, 1, 2]

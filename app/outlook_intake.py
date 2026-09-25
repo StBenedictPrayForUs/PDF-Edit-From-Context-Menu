@@ -16,6 +16,8 @@ SENDERS = {"jamesg@rockymountainrespiratory.com": "James",
            "ryanmcbride30377@gmail.com": "Ryan",
            "ryan@rockymountainrespiratory.com": "Ryan"}
 TECHNICIANS = list(dict.fromkeys(SENDERS.values()))
+# Technicians whose subject names the PDF's single facility ("Clear Creek 9.1.26").
+SUBJECT_FACILITY_TECHNICIANS = {"Ryan"}
 SMTP_PROPERTY = "http://schemas.microsoft.com/mapi/proptag/0x5D01001F"
 MESSAGE_ID_PROPERTY = "http://schemas.microsoft.com/mapi/proptag/0x1035001F"
 MAPI_E_NOT_FOUND = -2147221233
@@ -44,7 +46,7 @@ class IntakeStore:
         with self.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, path TEXT NOT NULL, note TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
             columns = [row[1] for row in db.execute("PRAGMA table_info(jobs)")]
-            for column, default in (("technician", "James"), ("entry_id", ""), ("store_id", "")):
+            for column, default in (("technician", "James"), ("entry_id", ""), ("store_id", ""), ("subject", "")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT NOT NULL DEFAULT '{default}'")
 
@@ -61,18 +63,19 @@ class IntakeStore:
         with self.connect() as db:
             return db.execute("SELECT 1 FROM jobs WHERE id=?", (key,)).fetchone() is not None
 
-    def add(self, key: str, path: Path, note: str, technician: str, entry_id: str, store_id: str) -> None:
+    def add(self, key: str, path: Path, note: str, technician: str, entry_id: str, store_id: str,
+            subject: str = "") -> None:
         with self.connect() as db:
-            db.execute("INSERT OR IGNORE INTO jobs(id,path,note,technician,entry_id,store_id) VALUES (?,?,?,?,?,?)",
-                       (key, str(path), note, technician, entry_id, store_id))
+            db.execute("INSERT OR IGNORE INTO jobs(id,path,note,technician,entry_id,store_id,subject) VALUES (?,?,?,?,?,?,?)",
+                       (key, str(path), note, technician, entry_id, store_id, subject))
 
     def email(self, key: str) -> tuple[str, str] | None:
         with self.connect() as db:
             return db.execute("SELECT entry_id,store_id FROM jobs WHERE id=? AND entry_id<>''", (key,)).fetchone()
 
-    def pending(self) -> list[tuple[str, str, str, str]]:
+    def pending(self) -> list[tuple[str, str, str, str, str]]:
         with self.connect() as db:
-            return db.execute("SELECT id,path,note,technician FROM jobs WHERE done=0 ORDER BY rowid").fetchall()
+            return db.execute("SELECT id,path,note,technician,subject FROM jobs WHERE done=0 ORDER BY rowid").fetchall()
 
     def complete(self, key: str) -> None:
         with self.connect() as db:
@@ -178,7 +181,7 @@ def scan_outlook(namespace, store: IntakeStore, since: datetime, stop: threading
                 if temporary.stat().st_size == 0:
                     raise ValueError("An attachment download was empty.")
                 temporary.replace(path)
-                store.add(key, path, note, technician, str(mail.EntryID), str(inbox.StoreID))
+                store.add(key, path, note, technician, str(mail.EntryID), str(inbox.StoreID), str(mail.Subject or ""))
                 saved += 1
         except Exception:
             failures += 1

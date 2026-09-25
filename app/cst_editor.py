@@ -8,7 +8,7 @@ from PySide6.QtCore import QDate, QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QComboBox, QCompleter, QDateEdit, QFileDialog, QHBoxLayout, QLabel,
                               QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
-from .cst_workflow import export_cst_batch, fetch_facilities
+from .cst_workflow import date_from_subject, export_cst_batch, facility_from_subject, fetch_facilities
 from .editor_window import PdfEditorWindow
 from .cst_submission import discard_batch, inspect_batch, submit_batch
 from .outlook_intake import TECHNICIANS
@@ -183,6 +183,24 @@ class CstEditorWindow(PdfEditorWindow):
             self.intake_note.setText("Select split starts and a facility per section.")
             QTimer.singleShot(0, self.document_date.setFocus)
         return result
+
+    def prefill_from_subject(self, subject: str, facility: bool) -> str:
+        """Fill the date, and optionally the first section's facility, from an email subject.
+
+        Returns a short note describing what was filled.
+        """
+        filled = []
+        found_date = date_from_subject(subject)
+        if found_date:
+            self.document_date.setDate(QDate(found_date))
+            filled.append("date")
+        match = facility_from_subject(subject, self.facilities) if facility else None
+        if match and self.facility_inputs:
+            first = self._ordered_sections()[0][2]
+            self.section_facilities[first] = match
+            self.facility_inputs[first].setEditText(match)
+            filled.append("facility")
+        return f" Filled {' and '.join(filled)} from the subject “{subject}”; check before submitting." if filled else ""
 
     def _load_facilities(self) -> None:
         # Refreshed per document so the choices always match what the RMRR form accepts.
