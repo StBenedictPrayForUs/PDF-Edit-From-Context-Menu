@@ -16,7 +16,8 @@ from PySide6.QtTest import QTest
 
 from app.cst_editor import CstEditorWindow, FacilityComboBox
 from app.cst_workflow import export_cst_batch, fetch_facilities, parse_facilities
-from app.outlook_intake import IntakeStore, MAILBOX, extra_body_text, scan_outlook
+from app.outlook_intake import (IntakeStore, MAILBOX, MAPI_E_NOT_FOUND, extra_body_text, prune_left_inbox,
+                                scan_outlook)
 
 
 def make_pdf(path):
@@ -136,6 +137,49 @@ class CstWorkflowTests(unittest.TestCase):
             message.PropertyAccessor = SimpleNamespace(GetProperty=lambda _: "other@example.com")
             scan_outlook(namespace, store, since, threading.Event())
             self.assertEqual(attachment.saves, 1)
+
+    def test_dismiss_deletes_copy_and_never_requeues(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = IntakeStore(Path(folder))
+            pdf = Path(folder) / "dup.pdf"
+            pdf.write_bytes(b"x")
+            store.add("dup", pdf, "", "James", "entry", "store")
+            store.dismiss("dup")
+            self.assertFalse(pdf.exists())
+            self.assertEqual(store.pending(), [])
+            self.assertTrue(store.contains("dup"))
+
+    def test_emails_that_left_the_inbox_are_dropped(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = IntakeStore(Path(folder))
+            for key in ("inbox", "deleted", "moved", "busy"):
+                store.add(key, Path(folder) / f"{key}.pdf", "", "James", key, "store")
+            inbox = SimpleNamespace(EntryID="INBOX")
+            def get_item(entry_id, store_id):
+                if entry_id == "moved":
+                    raise Exception(-2147352567, "Exception occurred.",
+                                    (4096, "Microsoft Outlook", "cannot be found", None, 0, MAPI_E_NOT_FOUND), None)
+                if entry_id == "busy":
+                    raise Exception(-2147352567, "Exception occurred.", (4096, "Microsoft Outlook", "busy", None, 0, -1), None)
+                folder_id = "INBOX" if entry_id == "inbox" else "DELETED"
+                return SimpleNamespace(Parent=SimpleNamespace(EntryID=folder_id))
+            prune_left_inbox(SimpleNamespace(GetItemFromID=get_item), store, inbox)
+            self.assertEqual([row[0] for row in store.pending()], ["inbox", "busy"])
+
+    def test_dismiss_button_drops_active_intake(self):
+        from app.tray_runtime import TrayRuntime
+        runtime = object.__new__(TrayRuntime)
+        runtime.active_intake_id = "dup"
+        runtime.failed_intake_id = None
+        calls = []
+        runtime.intake_store = SimpleNamespace(complete=lambda k: calls.append(("complete", k)),
+                                               dismiss=lambda k: calls.append(("dismiss", k)))
+        runtime.cst_window = SimpleNamespace(set_aside=lambda: calls.append("set_aside"), metadata=None,
+                                             submitting=False, hide=lambda: calls.append("hide"))
+        runtime.watch_action = SimpleNamespace(isChecked=lambda: False)
+        runtime._dismiss_intake()
+        self.assertEqual(calls, [("complete", "dup"), "set_aside", "hide", ("dismiss", "dup")])
+        self.assertIsNone(runtime.active_intake_id)
 
     def test_intake_does_not_replace_active_manual_work(self):
         from app.tray_runtime import TrayRuntime

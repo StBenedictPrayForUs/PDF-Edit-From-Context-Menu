@@ -102,6 +102,7 @@ class TrayRuntime:
             self.cst_window = CstEditorWindow()
             self.cst_window.batch_exported.connect(self._cst_exported)
             self.cst_window.submission_finished.connect(self._cst_submission_finished)
+            self.cst_window.intake_dismissed.connect(self._dismiss_intake)
             self.cst_window.on_received = lambda source: (
                 file_email(self.intake_store, source.stem) if source.parent == INTAKE_DIR else "")
         return self.cst_window
@@ -135,11 +136,23 @@ class TrayRuntime:
         if answer != QMessageBox.Yes:
             return
         self.intake_store.complete(key)
+        self._close_active_intake()
+
+    def _dismiss_intake(self) -> None:
+        if self.active_intake_id:
+            key = self.active_intake_id
+            self.intake_store.complete(key)
+            self._close_active_intake()
+            self.intake_store.dismiss(key)  # Deletes the copy now that the window released it.
+
+    def _close_active_intake(self) -> None:
         if self.active_intake_id and self.cst_window:
             self.cst_window.set_aside()
         self.active_intake_id = None
         self.failed_intake_id = None
         self._open_next_if_watching()
+        if self.cst_window and self.cst_window.metadata is None and not self.cst_window.submitting:
+            self.cst_window.hide()  # Nothing left to work on.
 
     def _toggle_intake(self, enabled: bool) -> None:
         if enabled and not self.settings.value("cst/watch_since", "", str):
@@ -182,9 +195,14 @@ class TrayRuntime:
     def _intake_finished(self, status: str) -> None:
         if not self.watch_action.isChecked() or self.intake_stop.is_set():
             return
-        pending = len(self.intake_store.pending())
-        self.intake_status.setText(f"{status} • {pending} pending")
-        self._open_next_intake()
+        pending = self.intake_store.pending()
+        self.intake_status.setText(f"{status} • {len(pending)} pending")
+        if self.active_intake_id and self.active_intake_id not in {row[0] for row in pending}:
+            # Its email left the Inbox, so the poll dropped it.
+            self.tray.showMessage("CST PDF closed", "Its email is no longer in the Inbox, so it won't be processed.")
+            self._dismiss_intake()  # Retries the delete the worker couldn't do while the PDF was open.
+        else:
+            self._open_next_intake()
 
     def _open_next_if_watching(self) -> None:
         if self.watch_action.isChecked():

@@ -18,6 +18,7 @@ SENDERS = {"jamesg@rockymountainrespiratory.com": "James",
 TECHNICIANS = list(dict.fromkeys(SENDERS.values()))
 SMTP_PROPERTY = "http://schemas.microsoft.com/mapi/proptag/0x5D01001F"
 MESSAGE_ID_PROPERTY = "http://schemas.microsoft.com/mapi/proptag/0x1035001F"
+MAPI_E_NOT_FOUND = -2147221233
 LOOKBACK = timedelta(days=14)
 INTAKE_DIR = Path.home() / "AppData" / "Local" / "PDFSplitter" / "CST Intake"
 
@@ -77,6 +78,21 @@ class IntakeStore:
         with self.connect() as db:
             db.execute("UPDATE jobs SET done=1 WHERE id=?", (key,))
 
+    def pending_emails(self) -> list[tuple[str, str, str]]:
+        with self.connect() as db:
+            return db.execute("SELECT id,entry_id,store_id FROM jobs WHERE done=0 AND entry_id<>''").fetchall()
+
+    def dismiss(self, key: str) -> None:
+        """Never process this PDF: drop it from the queue and delete the local copy."""
+        with self.connect() as db:
+            row = db.execute("SELECT path FROM jobs WHERE id=?", (key,)).fetchone()
+            db.execute("UPDATE jobs SET done=1 WHERE id=?", (key,))
+        if row:
+            try:
+                Path(row[0]).unlink(missing_ok=True)
+            except OSError:
+                logging.exception("Dismissed CST PDF could not be deleted: %s", row[0])
+
 
 def sender_address(mail) -> str:
     try:
@@ -86,6 +102,28 @@ def sender_address(mail) -> str:
             user = mail.Sender.GetExchangeUser()
             return str(user.PrimarySmtpAddress).lower() if user else ""
         return str(mail.SenderEmailAddress).lower()
+
+
+def left_inbox(namespace, inbox, entry_id: str, store_id: str) -> bool:
+    try:
+        mail = namespace.GetItemFromID(entry_id, store_id)
+    except Exception as exc:
+        # Deleted, or moved (Exchange gives moved items a new EntryID). Any other
+        # failure, like Outlook being busy, keeps the job queued.
+        info = exc.args[2] if len(exc.args) > 2 and isinstance(exc.args[2], tuple) else ()
+        return MAPI_E_NOT_FOUND in (exc.args[:1] + info[5:6])
+    return str(mail.Parent.EntryID) != str(inbox.EntryID)
+
+
+def prune_left_inbox(namespace, store: IntakeStore, inbox) -> None:
+    """Emails handled in Outlook before being processed here no longer need to open."""
+    for key, entry_id, store_id in store.pending_emails():
+        try:
+            if left_inbox(namespace, inbox, entry_id, store_id):
+                logging.info("CST email left the Inbox; dropping queued PDF %s", key)
+                store.dismiss(key)
+        except Exception:
+            logging.exception("Could not check whether a queued CST email is still in the Inbox")
 
 
 def scan_outlook(namespace, store: IntakeStore, since: datetime, stop: threading.Event) -> int:
@@ -102,6 +140,7 @@ def scan_outlook(namespace, store: IntakeStore, since: datetime, stop: threading
                 break
     if inbox is None:
         raise RuntimeError("Office mailbox not found in Outlook Classic.")
+    prune_left_inbox(namespace, store, inbox)
 
     # Outlook compares in local time. Don't re-check ReceivedTime in Python:
     # pywin32 labels that local value as UTC, which shifts it by the UTC offset.

@@ -65,6 +65,7 @@ class CstEditorWindow(PdfEditorWindow):
     batch_exported = Signal(str)
     submission_progress = Signal(str)
     submission_finished = Signal(bool, str)
+    intake_dismissed = Signal()
 
     def __init__(self) -> None:
         self.facilities: list[str] = []
@@ -116,6 +117,11 @@ class CstEditorWindow(PdfEditorWindow):
         self.submit_button.clicked.connect(lambda: self._export(send=True))
         self.submit_button.setToolTip("Send each section using the selected technician, date, facility, and type")
         self.right_panel.layout().addWidget(self.submit_button)
+        self.dismiss_button = QPushButton("Don't process this email…")
+        self.dismiss_button.setToolTip("For duplicates: delete the local copy and never open this email again")
+        self.dismiss_button.clicked.connect(self._confirm_dismiss)
+        self.dismiss_button.hide()
+        self.right_panel.layout().addWidget(self.dismiss_button)
         self.retry_button = QPushButton("Submit / retry saved CST batch…")
         self.retry_button.clicked.connect(self._pick_submission_batch)
         self.right_panel.layout().addWidget(self.retry_button)
@@ -128,9 +134,28 @@ class CstEditorWindow(PdfEditorWindow):
     def pick_pdf(self) -> None:
         self._pick_pdf()
 
+    @property
+    def intake_locked(self) -> bool:
+        return self._intake_locked
+
+    @intake_locked.setter
+    def intake_locked(self, locked: bool) -> None:
+        # Only emailed PDFs can be dismissed.
+        self._intake_locked = locked
+        if hasattr(self, "dismiss_button"):
+            self.dismiss_button.setVisible(locked)
+
     def set_aside(self) -> None:
         self._clear_loaded_pdf()
         self.intake_locked = False
+
+    def _confirm_dismiss(self) -> None:
+        answer = QMessageBox.question(self, "Don't process this email?",
+            "Delete this PDF's local copy and never open this email here again? "
+            "Nothing is submitted, and the email is left as it is in Outlook.",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+        if answer == QMessageBox.Yes:
+            self.intake_dismissed.emit()
 
     def _restore_window_header(self) -> None:
         super()._restore_window_header()
